@@ -6,11 +6,19 @@
 name: "HELM-release"
 
 on:
-  push:
+#   push:
+#     branches:
+#     - kit-ar/x--release
+#     tags:
+#     - kit-ar/v*
+  pull_request:
     branches:
-    - kit-ar/x--release
-    tags:
-    - kit-ar/v*
+      - kit-ar/x--release
+    types:
+      - closed
+    paths:
+      - '.github/workflows/helm-release.chart-releaser.yaml'
+      - 'charts/**/Chart.yaml'
 
 env:
   HELM_EXPERIMENTAL_OCI: 1 #enable OCI support
