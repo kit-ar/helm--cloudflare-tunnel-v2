@@ -1,0 +1,157 @@
+# Here we deploy cloudflared images. The tunnel token is stored ina k8s secret
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cloudflare-tunnel.fullname" . }}
+  labels:
+    {{- include "cloudflare-tunnel.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cloudflare-tunnel.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # These are here so the deployment rolls when the config or secret change.
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.cloudflare.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret-token.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if not .Values.cloudflare.existingSecretCred }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret-creds.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "cloudflare-tunnel.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cloudflare-tunnel.fullname" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+            {{- if .Values.cloudflare.existingSecret }}
+                name: {{ .Values.cloudflare.existingSecret }}
+            {{- else }}
+                name: {{ include "cloudflare-tunnel.fullname" . }}
+            {{- end }}
+          args:
+            - tunnel
+            # Points cloudflared to the config file, which configures what
+            # cloudflared will actually do. This file is created by a ConfigMap.
+            - --config
+            - /etc/cloudflared/config/config.yaml
+            # we should NOT auto-update, as we are in k8s (check documentation)
+            # even though this is also defined in configmap, it's helps reinforce and protect
+            - --no-autoupdate
+            - run
+
+          livenessProbe:
+            httpGet:
+              # Cloudflared has a /ready endpoint which returns 200 if and only if
+              # it has an active connection to the edge.
+              path: /ready
+              port: 2000
+            failureThreshold: 1
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+
+            {{- if .Values.cloudflare.existingSecretCred }}
+            # This enables use of tunnels created via "cloudflared tunnel create".
+            # Each tunnel has an associated "credentials file" which authorizes machines
+            # to run the tunnel. cloudflared will read this file from its local filesystem.
+            # it is assumed the mounted volume has "credentials.json" as per config map setting
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+      {{- if .Values.debugContainer.enabled }}
+        - name: debug
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          image: {{ .Values.debugContainer.image }}
+          imagePullPolicy: IfNotPresent
+          command: [ "/bin/sh" ]
+          args:    [ "-c", "while true; do echo 'sleeping to keep this container available for terminal...'; date -u; sleep 900; done" ]
+          envFrom:
+            - secretRef:
+            {{- if .Values.cloudflare.existingSecret }}
+                name: {{ .Values.cloudflare.existingSecret }}
+            {{- else }}
+                name: {{ include "cloudflare-tunnel.fullname" . }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            {{- if .Values.cloudflare.existingSecretCred }}
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+            {{- end }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "cloudflare-tunnel.fullname" . }}
+            items:
+              - key: config.yaml
+                path: config.yaml
+        {{- if .Values.cloudflare.existingSecretCred }}
+        - name: creds
+          secret:
+            secretName: {{ .Values.cloudflare.existingSecretCred }}
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.replicaCount }}
+      {{- if gt (int .Values.replicaCount) 1 }}
+      affinity:
+        {{- with .Values.affinity }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.affinity_keep_podAntiAffinity }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 10
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchExpressions:
+                  {{- range $k, $v := include "cloudflare-tunnel.selectorLabels" . | fromYaml }}
+                    - key: {{ $k }}
+                      operator: In
+                      values:
+                        - {{ $v }}
+                  {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

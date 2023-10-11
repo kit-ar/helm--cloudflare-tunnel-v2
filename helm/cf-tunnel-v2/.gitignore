@@ -1,0 +1,4 @@
+# ignore garbage files from windows, mac and linux
+.DS_Store
+*~
+Thumbs.db

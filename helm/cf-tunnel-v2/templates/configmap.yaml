@@ -1,0 +1,41 @@
+# This configmap stores the configuration used by cloudflared.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudflare-tunnel.fullname" . }}
+data:
+  config.yaml: |
+    # tunnel config via ENV based token or credentials.json
+    {{- if or .Values.cloudflare.existingSecretCred .Values.cloudflare.tunnelCli }}
+    tunnel: {{ .Values.cloudflare.tunnelName |quote }}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    {{- end }}
+
+    # General purpose TCP routing for the network
+    warp-routing:
+      enabled: {{ .Values.cloudflare.enableWarp |default false }}
+    # Serves the metrics server under /metrics and the readiness server under /ready
+    metrics: 0.0.0.0:2000
+    # Autoupdates applied in a k8s pod will be lost when the pod is removed or restarted, so
+    # autoupdate doesn't make sense in Kubernetes. However, outside of Kubernetes, we strongly
+    # recommend using autoupdate.
+    no-autoupdate: true
+    # The `ingress` block tells cloudflared which local service to route incoming
+    # requests to. For more about ingress rules, see
+    # https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/configuration/ingress
+    {{- if .Values.cloudflare.ingress }}
+    ingress:
+      {{- with .Values.cloudflare.ingress }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      # This rule matches any traffic which didn't match a previous rule, and responds with HTTP 404.
+      - service: http_status:404
+    {{- end }}
+
+    loglevel: {{ .Values.cloudflare.loglevel }}
+
+    transport-loglevel: {{ .Values.cloudflare.transportLoglevel }}
+
+    {{- if .Values.cloudflare.protocol }}
+    protocol: {{ .Values.cloudflare.protocol }}    # auto, http2, h2mux, and quic
+    {{- end }}

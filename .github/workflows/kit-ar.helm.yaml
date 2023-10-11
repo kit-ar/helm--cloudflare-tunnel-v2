@@ -1,0 +1,41 @@
+---
+# https://github.com/marketplace/actions/helm-chart-releaser
+# https://blog.ediri.io/how-to-create-a-github-gh-pages-branch-in-an-existing-repository
+
+on:
+  push:
+    branches:
+    - kit-ar/main
+
+env:
+  HELM_EXPERIMENTAL_OCI: 1 #enable OCI support
+  HELM_VERSION_TO_INSTALL: 3.8.2 # version of HELM to install
+  CHART_BASEDIR: ${{ github.workspace }}/helm
+  GCR_IMAGE: ghcr.io/${{ github.repository_owner }}/cloudflare-tunnel
+
+jobs:
+  build:
+    name: publish gcr
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: ${{ env.HELM_VERSION_TO_INSTALL }} # default is latest
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.4.0
+        with:
+          charts_dir: ${{ env.CHART_BASEDIR }}
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
